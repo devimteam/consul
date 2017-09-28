@@ -38,3 +38,9 @@ get int value
 ### Put(key string, value string) (*consulapi.WriteMeta, error)
 
 put KVPair
+
+
+# Environment variables
+
+### GROUP_NAME
+used for setting up global folder for keys. All keys will be accessed by path like GROUP_NAME/key

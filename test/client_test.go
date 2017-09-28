@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/l-vitaly/consul"
-	"github.com/l-vitaly/consul/testutil"
-	"github.com/l-vitaly/gounit"
+	"github.com/devimteam/consul"
+	"github.com/devimteam/consul/testutil"
+	"github.com/devimteam/gounit"
 )
 
 type Nested struct {

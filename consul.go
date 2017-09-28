@@ -4,14 +4,16 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
-
 	"time"
 
 	consulapi "github.com/hashicorp/consul/api"
 )
+
+const groupEnvName = "GROUP_NAME"
 
 type ErrKVNotFound struct {
 	Key string
@@ -207,6 +209,8 @@ func (c *client) GetServices(service string, tag string) ([]*consulapi.ServiceEn
 }
 
 func (c *client) LoadStruct(parent string, i interface{}) error {
+	groupName := os.Getenv(groupEnvName)
+	parent = fmt.Sprintf("%s/%s", groupName, parent)
 	return c.recursiveLoadStruct(parent, reflect.ValueOf(i).Elem())
 }
 
@@ -242,21 +246,26 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 				return err
 			}
 		} else {
+			var fieldValue []byte
+
+			if defaultValue, ok := tagOptions["default"]; ok {
+				fieldValue = []byte(defaultValue)
+			}
+
 			kv, _, err := c.Get(path)
 
 			if err != nil {
 				if _, ok := err.(ErrKVNotFound); !ok {
 					return err
+				} else {
+					_, err = c.Put(path, string(fieldValue))
+					if err != nil {
+						return err
+					}
 				}
 			}
 
-			var fieldValue []byte
-
-			if kv == nil {
-				if defaultValue, ok := tagOptions["default"]; ok {
-					fieldValue = []byte(defaultValue)
-				}
-			} else {
+			if kv != nil {
 				fieldValue = kv.Value
 			}
 

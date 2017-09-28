@@ -1,8 +1,8 @@
 package testutil
 
 import (
+	"github.com/devimteam/consul"
 	consulapi "github.com/hashicorp/consul/api"
-	"github.com/l-vitaly/consul"
 )
 
 func defaultServerConfig() *consulapi.Config {
