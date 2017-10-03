@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -236,7 +237,7 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 		if name, ok := tagOptions["name"]; ok {
 			kvName = name
 		} else {
-			kvName = strings.ToLower(field.Name)
+			kvName = c.normalizeKeyName(field.Name)
 		}
 
 		path := fmt.Sprintf("%s/%s", parent, kvName)
@@ -306,6 +307,12 @@ func (c *client) normalizeValue(kind reflect.Kind, value []byte) (interface{}, e
 	default:
 		return nil, errors.New(fmt.Sprintf("unsupported type \"%s\"", kind.String()))
 	}
+}
+
+func (c *client) normalizeKeyName(name string) string {
+	s := regexp.MustCompile("([A-Z]+[^A-Z]*)").FindAllString(name, -1)
+	ss := strings.Join(s[:], ".")
+	return strings.ToLower(ss)
 }
 
 func (c *client) getTagOptions(v string) (map[string]string, error) {
