@@ -212,7 +212,7 @@ func (c *client) GetServices(service string, tag string) ([]*consulapi.ServiceEn
 func (c *client) LoadStruct(parent string, i interface{}) error {
 	groupName := os.Getenv(groupEnvName)
 	if groupName != "" {
-		parent = fmt.Sprintf("%s/%s", groupName, parent)
+		parent = fmt.Sprintf("%s/%s", strings.Trim(groupName, "/"), parent)
 	}
 	return c.recursiveLoadStruct(parent, reflect.ValueOf(i).Elem())
 }
