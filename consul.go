@@ -16,6 +16,12 @@ import (
 
 const groupEnvName = "GROUP_NAME"
 
+const (
+	tagOptionRegexpString = "^([\\w]+):(.+)$"
+)
+
+var tagOptionRegexp = regexp.MustCompile(tagOptionRegexpString)
+
 type ErrKVNotFound struct {
 	Key string
 }
@@ -316,25 +322,20 @@ func (c *client) normalizeKeyName(name string) string {
 }
 
 func (c *client) getTagOptions(v string) (map[string]string, error) {
-	parts := strings.Split(v, ":")
-
-	size := len(parts)
-	if size%2 != 0 {
-		return nil, ErrInvalidTagOptions
-	}
-
 	res := make(map[string]string)
-	for i := 0; i < len(parts); i += 2 {
-		name := parts[i]
-		value := parts[i+1]
 
-		if !c.allowOption(name) {
-			continue
+	options := strings.Split(v, ";")
+	for _, option := range options {
+		parts := tagOptionRegexp.FindAllStringSubmatch(option, 1)
+		if len(parts) == 1 && len(parts[0]) == 3 {
+			optionName := parts[0][1]
+			optionValue := parts[0][2]
+			if !c.allowOption(optionName) {
+				continue
+			}
+			res[optionName] = optionValue
 		}
-
-		res[name] = value
 	}
-
 	return res, nil
 }
 
