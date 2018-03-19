@@ -310,6 +310,12 @@ func (c *client) normalizeValue(kind reflect.Kind, value []byte) (interface{}, e
 			return nil, err
 		}
 		return int(n), nil
+	case reflect.Bool:
+		n, err := strconv.ParseBool(string(value))
+		if err != nil {
+			return nil, err
+		}
+		return bool(n), nil
 	default:
 		return nil, errors.New(fmt.Sprintf("unsupported type \"%s\"", kind.String()))
 	}
