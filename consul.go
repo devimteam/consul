@@ -278,7 +278,7 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 				fieldValue = kv.Value
 			}
 
-			v, err := c.normalizeValue(field.Type.Kind(), fieldValue)
+			v, err := c.normalizeValue(field.Type, fieldValue)
 			if err != nil {
 				return err
 			}
@@ -288,8 +288,8 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 	return nil
 }
 
-func (c *client) normalizeValue(kind reflect.Kind, value []byte) (interface{}, error) {
-	switch kind {
+func (c *client) normalizeValue(reflectType reflect.Type, value []byte) (interface{}, error) {
+	switch reflectType.Kind() {
 	case reflect.String:
 		return string(value), nil
 	case reflect.Float32:
@@ -316,9 +316,16 @@ func (c *client) normalizeValue(kind reflect.Kind, value []byte) (interface{}, e
 			return nil, err
 		}
 		return bool(n), nil
-	default:
-		return nil, errors.New(fmt.Sprintf("unsupported type \"%s\"", kind.String()))
 	}
+
+	if reflectType == reflect.TypeOf(time.Duration(5)) {
+		n, err := strconv.ParseInt(strings.TrimSpace(string(value)), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		return time.Duration(n), nil
+	}
+	return nil, errors.New(fmt.Sprintf("unsupported type \"%s\"", reflectType.Kind().String()))
 }
 
 func (c *client) normalizeKeyName(name string) string {
