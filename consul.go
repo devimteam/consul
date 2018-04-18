@@ -52,14 +52,15 @@ type Client interface {
 	Get(key string) (*consulapi.KVPair, *consulapi.QueryMeta, error)
 	// WatchGet
 	WatchGet(key string) chan *consulapi.KVPair
-	// GetStr get string value
 	GetStr(key string) (string, error)
-	// GetInt get string value
 	GetInt(key string) (int, error)
+	GetBool(key string) (bool, error)
 	// Put put KVPair
 	Put(key string, value string) (*consulapi.WriteMeta, error)
 	// Load struct
 	LoadStruct(parent string, i interface{}) error
+	// Replace struct values
+	ReplaceFromStruct(parent string, i interface{}) error
 }
 
 type client struct {
@@ -153,6 +154,18 @@ func (c *client) GetInt(key string) (int, error) {
 	return res, nil
 }
 
+func (c *client) GetBool(key string) (bool, error) {
+	v, err := c.GetStr(key)
+	if err != nil {
+		return false, err
+	}
+	res, err := strconv.ParseBool(string(v))
+	if err != nil {
+		return false, err
+	}
+	return res, nil
+}
+
 // Put KVPair
 func (c *client) Put(key string, value string) (*consulapi.WriteMeta, error) {
 	p := &consulapi.KVPair{Key: key, Value: []byte(value)}
@@ -216,11 +229,34 @@ func (c *client) GetServices(service string, tag string) ([]*consulapi.ServiceEn
 }
 
 func (c *client) LoadStruct(parent string, i interface{}) error {
+	return c.recursiveLoadStruct(c.getGroupName(parent), reflect.ValueOf(i).Elem())
+}
+
+func (c *client) getGroupName(parent string) string {
 	groupName := os.Getenv(groupEnvName)
 	if groupName != "" {
 		parent = fmt.Sprintf("%s/%s", strings.Trim(groupName, "/"), parent)
 	}
-	return c.recursiveLoadStruct(parent, reflect.ValueOf(i).Elem())
+	return parent
+}
+
+func (c *client) getKeyPath(parent string, field reflect.StructField) (string, error) {
+	var tagOptions map[string]string
+	var err error
+	tagOptions, err = c.getTagOptions(field.Tag.Get("consul"))
+	if err != nil {
+		return "", err
+	}
+
+	var kvName string
+	if name, ok := tagOptions["name"]; ok {
+		kvName = name
+	} else {
+		kvName = c.normalizeKeyName(field.Name)
+	}
+
+	path := fmt.Sprintf("%s/%s", parent, kvName)
+	return path, nil
 }
 
 func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
@@ -231,22 +267,12 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 		var tagOptions map[string]string
 		var err error
 
-		tag := field.Tag.Get("consul")
-		if tag != "" {
-			tagOptions, err = c.getTagOptions(tag)
-			if err != nil {
-				return err
-			}
+		tagOptions, err = c.getTagOptions(field.Tag.Get("consul"))
+		if err != nil {
+			return err
 		}
 
-		var kvName string
-		if name, ok := tagOptions["name"]; ok {
-			kvName = name
-		} else {
-			kvName = c.normalizeKeyName(field.Name)
-		}
-
-		path := fmt.Sprintf("%s/%s", parent, kvName)
+		path, err := c.getKeyPath(parent, field)
 
 		if _, ok := value.Interface().(time.Time); ok {
 		} else if field.Type.Kind() == reflect.Struct {
@@ -278,7 +304,7 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 				fieldValue = kv.Value
 			}
 
-			v, err := c.normalizeValue(field.Type, fieldValue)
+			v, err := c.typifyValue(field.Type, fieldValue)
 			if err != nil {
 				return err
 			}
@@ -288,7 +314,7 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 	return nil
 }
 
-func (c *client) normalizeValue(reflectType reflect.Type, value []byte) (interface{}, error) {
+func (c *client) typifyValue(reflectType reflect.Type, value []byte) (interface{}, error) {
 	switch reflectType.Kind() {
 	case reflect.String:
 		return string(value), nil
@@ -328,6 +354,57 @@ func (c *client) normalizeValue(reflectType reflect.Type, value []byte) (interfa
 	return nil, errors.New(fmt.Sprintf("unsupported type \"%s\"", reflectType.Kind().String()))
 }
 
+func (c *client) ReplaceFromStruct(parent string, i interface{}) error {
+	return c.recursiveReplaceStruct(c.getGroupName(parent), reflect.ValueOf(i).Elem())
+}
+
+func (c *client) recursiveReplaceStruct(parent string, val reflect.Value) error {
+	for i := 0; i < val.NumField(); i++ {
+		value := val.Field(i)
+		field := val.Type().Field(i)
+		var err error
+
+		path, err := c.getKeyPath(parent, field)
+
+		if _, ok := value.Interface().(time.Time); ok {
+		} else if field.Type.Kind() == reflect.Struct {
+			err = c.recursiveReplaceStruct(path, value)
+			if err != nil {
+				return err
+			}
+		} else {
+			fieldValue, err := c.stringifyValue(value)
+			if err != nil {
+				return err
+			}
+			_, err = c.Put(path, fieldValue)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c *client) stringifyValue(value reflect.Value) (string, error) {
+	switch value.Type().Kind() {
+	case reflect.String:
+		return value.String(), nil
+	case reflect.Float32, reflect.Float64:
+		return strconv.FormatFloat(value.Float(), 'f', -1, 64), nil
+	case reflect.Int:
+		return strconv.FormatInt(value.Int(), 10), nil
+	case reflect.Bool:
+		return strconv.FormatBool(value.Bool()), nil
+	}
+
+	if _, ok := value.Interface().(time.Duration); ok {
+		return strconv.FormatInt(value.Int(), 10), nil
+	}
+
+	return "", errors.New(fmt.Sprintf("unsupported type \"%s\"", value.Type().Kind().String()))
+}
+
 func (c *client) normalizeKeyName(name string) string {
 	s := regexp.MustCompile("([A-Z]+[^A-Z]*)").FindAllString(name, -1)
 	ss := strings.Join(s[:], ".")
@@ -336,6 +413,10 @@ func (c *client) normalizeKeyName(name string) string {
 
 func (c *client) getTagOptions(v string) (map[string]string, error) {
 	res := make(map[string]string)
+
+	if v == "" {
+		return res, nil
+	}
 
 	options := strings.Split(v, ";")
 	for _, option := range options {
