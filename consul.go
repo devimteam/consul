@@ -191,7 +191,7 @@ func (c *client) RegisterService(name string, addr string, tags ...string) error
 		Port:    port,
 		Tags:    tags,
 		Check: &consulapi.AgentServiceCheck{
-			//Script:   fmt.Sprintf("curl localhost:%d > /dev/null 2>&1", port),
+			Script:   fmt.Sprintf("curl localhost:%d > /dev/null 2>&1", port),
 			Interval: "10s",
 		},
 	}
