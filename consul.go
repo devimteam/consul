@@ -191,7 +191,7 @@ func (c *client) RegisterService(name string, addr string, tags ...string) error
 		Port:    port,
 		Tags:    tags,
 		Check: &consulapi.AgentServiceCheck{
-			Script:   fmt.Sprintf("curl localhost:%d > /dev/null 2>&1", port),
+			//Script:   fmt.Sprintf("curl localhost:%d > /dev/null 2>&1", port),
 			Interval: "10s",
 		},
 	}
@@ -248,15 +248,11 @@ func (c *client) getKeyPath(parent string, field reflect.StructField) (string, e
 		return "", err
 	}
 
-	var kvName string
+	kvName  := c.normalizeKeyName(field.Name)
 	if name, ok := tagOptions["name"]; ok {
 		kvName = name
-	} else {
-		kvName = c.normalizeKeyName(field.Name)
 	}
-
-	path := fmt.Sprintf("%s/%s", parent, kvName)
-	return path, nil
+	return fmt.Sprintf("%s/%s", parent, kvName), nil
 }
 
 func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
@@ -272,9 +268,33 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 			return err
 		}
 
-		path, err := c.getKeyPath(parent, field)
-
+		// err always nil
+		path, _ := c.getKeyPath(parent, field)
 		if _, ok := value.Interface().(time.Time); ok {
+			// break ifs
+		} else if field.Type.Kind() == reflect.Map {
+			if field.Type.Key().Kind() != reflect.String {
+				return fmt.Errorf("%s is unsupported map's key type", field.Type.Key().String())
+			}
+			if field.Type.Elem().Kind() != reflect.String {
+				return fmt.Errorf("%s is unsupported map's value type", field.Type.Elem().String())
+			}
+			_, _, err := c.Get(path)
+			if err != nil {
+				if _, ok := err.(ErrKVNotFound); !ok {
+					return err
+				} else {
+					_, err = c.Put(path, "")
+					if err != nil {
+						return err
+					}
+				}
+			}
+			m, err := c.loadMapStringString(path, value)
+			if err != nil {
+				return err
+			}
+			value.Set(reflect.ValueOf(m))
 		} else if field.Type.Kind() == reflect.Struct {
 			err = c.recursiveLoadStruct(path, value)
 			if err != nil {
@@ -288,7 +308,6 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 			}
 
 			kv, _, err := c.Get(path)
-
 			if err != nil {
 				if _, ok := err.(ErrKVNotFound); !ok {
 					return err
@@ -314,34 +333,61 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 	return nil
 }
 
+func (c *client) loadMapStringString(parent string, val reflect.Value) (map[string]string, error ){
+	pairs, _, err := c.kv.List(parent, nil)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		key := strings.TrimLeft(strings.TrimPrefix(p.Key, parent), "/")
+		if key == "" {
+			continue
+		}
+		m[key] = string(p.Value)
+	}
+	return m, nil
+}
+
 func (c *client) typifyValue(reflectType reflect.Type, value []byte) (interface{}, error) {
 	switch reflectType.Kind() {
 	case reflect.String:
 		return string(value), nil
 	case reflect.Float32:
+		if len(value) == 0 {
+			return float32(0.0), nil
+		}
 		n, err := strconv.ParseFloat(strings.TrimSpace(string(value)), 32)
 		if err != nil {
 			return nil, err
 		}
 		return float32(n), nil
 	case reflect.Float64:
+		if len(value) == 0 {
+			return float64(0.0), nil
+		}
 		n, err := strconv.ParseFloat(strings.TrimSpace(string(value)), 64)
 		if err != nil {
 			return nil, err
 		}
 		return n, nil
 	case reflect.Int:
+		if len(value) == 0 {
+			return 0, nil
+		}
 		n, err := strconv.ParseInt(strings.TrimSpace(string(value)), 10, 64)
 		if err != nil {
 			return nil, err
 		}
 		return int(n), nil
 	case reflect.Bool:
-		n, err := strconv.ParseBool(string(value))
+		b, err := strconv.ParseBool(string(value))
 		if err != nil {
 			return nil, err
 		}
-		return bool(n), nil
+		return b, nil
+	case reflect.Map:
+
 	}
 
 	if reflectType == reflect.TypeOf(time.Duration(5)) {

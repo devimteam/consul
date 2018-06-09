@@ -22,6 +22,7 @@ type testStruct struct {
 	Offset int
 	Time   time.Time
 	Nested Nested
+	Keys map[string]string
 }
 
 func makeTestClient() (consul.Client, error) {
@@ -31,7 +32,7 @@ func makeTestClient() (consul.Client, error) {
 func testKey() string {
 	buf := make([]byte, 16)
 	if _, err := crand.Read(buf); err != nil {
-		panic(fmt.Errorf("Failed to read random bytes: %v", err))
+		panic(fmt.Errorf("failed to read random bytes: %v", err))
 	}
 
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%12x",
@@ -76,6 +77,7 @@ func TestLoadStruct(t *testing.T) {
 	u.AssertEquals("name", s.Nested.Name, gounit.EmptyMessage)
 	u.AssertEquals(2, s.Offset, gounit.EmptyMessage)
 	u.AssertEquals(float32(2.33), s.Nested.Delay, gounit.EmptyMessage)
+	u.AssertEquals(map[string]string{"A":"A","B":"B"}, s.Keys, gounit.EmptyMessage)
 }
 
 func TestLoadStructDefaultValue(t *testing.T) {
