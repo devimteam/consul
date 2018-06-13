@@ -284,7 +284,7 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 				if _, ok := err.(ErrKVNotFound); !ok {
 					return err
 				} else {
-					_, err = c.Put(path, "")
+					_, err = c.Put(path+"/", "")
 					if err != nil {
 						return err
 					}
