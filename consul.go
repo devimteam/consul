@@ -12,6 +12,7 @@ import (
 	"time"
 
 	consulapi "github.com/hashicorp/consul/api"
+	"github.com/vetcher/go-case"
 )
 
 const groupEnvName = "GROUP_NAME"
@@ -36,7 +37,7 @@ var (
 	ErrInvalidTagOptions  = errors.New("invalid tag options")
 )
 
-var allowOptions = map[string]string{"name": "", "default": ""}
+var allowOptions = map[string]struct{}{"name": {}, "default": {}}
 
 //Client provides an interface for getting data out of Consul
 type Client interface {
@@ -452,9 +453,7 @@ func (c *client) stringifyValue(value reflect.Value) (string, error) {
 }
 
 func (c *client) normalizeKeyName(name string) string {
-	s := regexp.MustCompile("([A-Z]+[^A-Z]*)").FindAllString(name, -1)
-	ss := strings.Join(s[:], ".")
-	return strings.ToLower(ss)
+	return go_case.ToDotSnakeCase(name)
 }
 
 func (c *client) getTagOptions(v string) (map[string]string, error) {
