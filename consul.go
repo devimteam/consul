@@ -215,12 +215,6 @@ func (c *client) typifyValue(reflectType reflect.Type, value string) (interface{
 		}
 		n, err := strconv.ParseInt(value, 10, 64)
 		return int(n), err
-	case reflect.Int64:
-		if len(value) == 0 {
-			return 0, nil
-		}
-		n, err := strconv.ParseInt(value, 10, 64)
-		return int64(n), err
 	case reflect.Uint:
 		if len(value) == 0 {
 			return uint(0), nil
