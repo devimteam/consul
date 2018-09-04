@@ -3,7 +3,6 @@ package consul
 import (
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"reflect"
 	"regexp"
@@ -17,67 +16,45 @@ import (
 
 const groupEnvName = "GROUP_NAME"
 
-const (
-	tagOptionRegexpString = "^([\\w]+):(.+)$"
-)
+const tagOptionRegexpString = "^([\\w]+):(.+)$"
 
 var tagOptionRegexp = regexp.MustCompile(tagOptionRegexpString)
 
-type ErrKVNotFound struct {
-	Key string
+type ErrKVNotFound struct{ Key string }
+
+func (e ErrKVNotFound) Error() string { return fmt.Sprintf("kv \"%s\" not found", e.Key) }
+
+var allowOptions = map[string]struct{}{
+	"name":    {},
+	"default": {},
 }
 
-func (e ErrKVNotFound) Error() string {
-	return fmt.Sprintf("kv \"%s\" not found", e.Key)
-}
-
-var (
-	ErrInvalidServiceAddr = errors.New("invalid service address")
-	ErrInvalidPort        = errors.New("invalid port")
-	ErrInvalidTagOptions  = errors.New("invalid tag options")
-)
-
-var allowOptions = map[string]struct{}{"name": {}, "default": {}}
-
-//Client provides an interface for getting data out of Consul
+// Client provides an interface for getting data out of Consul
 type Client interface {
-	// GetServices get a services from consul
-	GetServices(service string, tag string) ([]*consulapi.ServiceEntry, *consulapi.QueryMeta, error)
-	// GetFirstService get a first service from consul
-	GetFirstService(service string, tag string) (*consulapi.ServiceEntry, *consulapi.QueryMeta, error)
-	// RegisterService register a service with local agent
-	RegisterService(name string, addr string, tags ...string) error
-	// DeRegisterService deregister a service with local agent
-	DeRegisterService(string) error
-	// Get get KVPair
+	// Primitive, that gets value by key
 	Get(key string) (*consulapi.KVPair, *consulapi.QueryMeta, error)
-	// WatchGet
-	WatchGet(key string) chan *consulapi.KVPair
-	GetStr(key string) (string, error)
-	GetInt(key string) (int, error)
-	GetBool(key string) (bool, error)
-	// Put put KVPair
+	// Primitive, that puts value by key
 	Put(key string, value string) (*consulapi.WriteMeta, error)
-	// Load struct
+	// LoadStruct loads kv pairs to structure.
+	// Allowed types for struct fields:
+	// - string, []byte
+	// - int, int64, uint, uint64, float32, float64
+	// - time.Duration
+	// - map[string]string
 	LoadStruct(parent string, i interface{}) error
-	// Replace struct values
+	// ReplaceFromStruct pushes structure's value to server
+	// Same supported types with LoadStruct
 	ReplaceFromStruct(parent string, i interface{}) error
 }
 
 type client struct {
-	kv     *consulapi.KV
-	health *consulapi.Health
-	meta   map[string]*consulapi.QueryMeta
-	agent  *consulapi.Agent
+	kv *consulapi.KV
 }
 
 // NewClient returns a Client interface for given consul address
 func NewClientWithConsulClient(c *consulapi.Client) Client {
 	return &client{
-		kv:     c.KV(),
-		health: c.Health(),
-		agent:  c.Agent(),
-		meta:   make(map[string]*consulapi.QueryMeta),
+		kv: c.KV(),
 	}
 }
 
@@ -104,129 +81,13 @@ func (c *client) Get(key string) (*consulapi.KVPair, *consulapi.QueryMeta, error
 	if kv == nil {
 		return nil, nil, ErrKVNotFound{Key: key}
 	}
-
-	c.meta[key] = meta
-
 	return kv, meta, nil
-}
-
-func (c *client) WatchGet(key string) chan *consulapi.KVPair {
-	doneCh := make(chan *consulapi.KVPair)
-	go func(k string, ch chan *consulapi.KVPair) {
-		for {
-			var lastIndex uint64 = 1
-			if meta, ok := c.meta[key]; ok {
-				lastIndex = meta.LastIndex
-			}
-			kv, meta, err := c.kv.Get(k, &consulapi.QueryOptions{WaitIndex: lastIndex})
-
-			if lastIndex == 1 && kv == nil {
-				continue
-			}
-
-			if err != nil {
-				close(ch)
-			}
-			c.meta[key] = meta
-			ch <- kv
-		}
-	}(key, doneCh)
-	return doneCh
-}
-
-// GetStr string
-func (c *client) GetStr(key string) (string, error) {
-	kv, _, err := c.Get(key)
-	if err != nil {
-		return "", err
-	}
-	return string(kv.Value), nil
-}
-
-func (c *client) GetInt(key string) (int, error) {
-	v, err := c.GetStr(key)
-	if err != nil {
-		return 0, err
-	}
-	res, err := strconv.Atoi(v)
-	if err != nil {
-		return 0, err
-	}
-	return res, nil
-}
-
-func (c *client) GetBool(key string) (bool, error) {
-	v, err := c.GetStr(key)
-	if err != nil {
-		return false, err
-	}
-	res, err := strconv.ParseBool(string(v))
-	if err != nil {
-		return false, err
-	}
-	return res, nil
 }
 
 // Put KVPair
 func (c *client) Put(key string, value string) (*consulapi.WriteMeta, error) {
 	p := &consulapi.KVPair{Key: key, Value: []byte(value)}
 	return c.kv.Put(p, nil)
-}
-
-// RegisterService a service with consul local agent
-func (c *client) RegisterService(name string, addr string, tags ...string) error {
-	host, strPort, err := net.SplitHostPort(addr)
-	if err != nil {
-		return ErrInvalidServiceAddr
-	}
-
-	port, err := strconv.Atoi(strPort)
-	if err != nil {
-		return ErrInvalidPort
-	}
-
-	reg := &consulapi.AgentServiceRegistration{
-		ID:      name,
-		Name:    name,
-		Address: host,
-		Port:    port,
-		Tags:    tags,
-		Check: &consulapi.AgentServiceCheck{
-			Script:   fmt.Sprintf("curl localhost:%d > /dev/null 2>&1", port),
-			Interval: "10s",
-		},
-	}
-	return c.agent.ServiceRegister(reg)
-}
-
-// DeRegisterService a service with consul local agent
-func (c *client) DeRegisterService(id string) error {
-	return c.agent.ServiceDeregister(id)
-}
-
-// GetFirstService get first service
-func (c *client) GetFirstService(service string, tag string) (*consulapi.ServiceEntry, *consulapi.QueryMeta, error) {
-	addrs, meta, err := c.GetServices(service, tag)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(addrs) == 0 {
-		return nil, nil, errors.New(fmt.Sprintf("service \"%s\" not found", service))
-	}
-	return addrs[0], meta, nil
-}
-
-// GetServices return a services
-func (c *client) GetServices(service string, tag string) ([]*consulapi.ServiceEntry, *consulapi.QueryMeta, error) {
-	passingOnly := true
-	addrs, meta, err := c.health.Service(service, tag, passingOnly, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(addrs) == 0 {
-		return nil, nil, errors.New(fmt.Sprintf("service \"%s\" not found", service))
-	}
-	return addrs, meta, nil
 }
 
 func (c *client) LoadStruct(parent string, i interface{}) error {
@@ -241,39 +102,24 @@ func (c *client) getGroupName(parent string) string {
 	return parent
 }
 
-func (c *client) getKeyPath(parent string, field reflect.StructField) (string, error) {
-	var tagOptions map[string]string
-	var err error
-	tagOptions, err = c.getTagOptions(field.Tag.Get("consul"))
-	if err != nil {
-		return "", err
-	}
-
-	kvName  := c.normalizeKeyName(field.Name)
+func (c *client) getKeyPath(parent string, field reflect.StructField) string {
+	tagOptions := c.getTagOptions(field.Tag.Get("consul"))
+	kvName := c.normalizeKeyName(field.Name)
 	if name, ok := tagOptions["name"]; ok {
 		kvName = name
 	}
-	return fmt.Sprintf("%s/%s", parent, kvName), nil
+	return fmt.Sprintf("%s/%s", parent, kvName)
 }
 
 func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 	for i := 0; i < val.NumField(); i++ {
 		value := val.Field(i)
 		field := val.Type().Field(i)
+		tagOptions := c.getTagOptions(field.Tag.Get("consul"))
+		path := c.getKeyPath(parent, field)
 
-		var tagOptions map[string]string
-		var err error
-
-		tagOptions, err = c.getTagOptions(field.Tag.Get("consul"))
-		if err != nil {
-			return err
-		}
-
-		// err always nil
-		path, _ := c.getKeyPath(parent, field)
-		if _, ok := value.Interface().(time.Time); ok {
-			// break ifs
-		} else if field.Type.Kind() == reflect.Map {
+		switch field.Type.Kind() {
+		case reflect.Map:
 			if field.Type.Key().Kind() != reflect.String {
 				return fmt.Errorf("%s is unsupported map's key type", field.Type.Key().String())
 			}
@@ -284,11 +130,10 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 			if err != nil {
 				if _, ok := err.(ErrKVNotFound); !ok {
 					return err
-				} else {
-					_, err = c.Put(path+"/", "")
-					if err != nil {
-						return err
-					}
+				}
+				_, err = c.Put(path+"/", "")
+				if err != nil {
+					return err
 				}
 			}
 			m, err := c.loadMapStringString(path, value)
@@ -296,32 +141,30 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 				return err
 			}
 			value.Set(reflect.ValueOf(m))
-		} else if field.Type.Kind() == reflect.Struct {
-			err = c.recursiveLoadStruct(path, value)
+		case reflect.Struct:
+			err := c.recursiveLoadStruct(path, value)
 			if err != nil {
 				return err
 			}
-		} else {
-			var fieldValue []byte
-
+		default:
+			var fieldValue string
 			if defaultValue, ok := tagOptions["default"]; ok {
-				fieldValue = []byte(defaultValue)
+				fieldValue = defaultValue
 			}
 
 			kv, _, err := c.Get(path)
 			if err != nil {
 				if _, ok := err.(ErrKVNotFound); !ok {
 					return err
-				} else {
-					_, err = c.Put(path, string(fieldValue))
-					if err != nil {
-						return err
-					}
+				}
+				_, err = c.Put(path, fieldValue)
+				if err != nil {
+					return err
 				}
 			}
 
 			if kv != nil {
-				fieldValue = kv.Value
+				fieldValue = string(kv.Value)
 			}
 
 			v, err := c.typifyValue(field.Type, fieldValue)
@@ -334,7 +177,7 @@ func (c *client) recursiveLoadStruct(parent string, val reflect.Value) error {
 	return nil
 }
 
-func (c *client) loadMapStringString(parent string, val reflect.Value) (map[string]string, error ){
+func (c *client) loadMapStringString(parent string, val reflect.Value) (map[string]string, error) {
 	pairs, _, err := c.kv.List(parent, nil)
 	if err != nil {
 		return nil, err
@@ -350,51 +193,58 @@ func (c *client) loadMapStringString(parent string, val reflect.Value) (map[stri
 	return m, nil
 }
 
-func (c *client) typifyValue(reflectType reflect.Type, value []byte) (interface{}, error) {
+func (c *client) typifyValue(reflectType reflect.Type, value string) (interface{}, error) {
+	value = strings.TrimSpace(value)
 	switch reflectType.Kind() {
 	case reflect.String:
-		return string(value), nil
+		return value, nil
 	case reflect.Float32:
 		if len(value) == 0 {
 			return float32(0.0), nil
 		}
-		n, err := strconv.ParseFloat(strings.TrimSpace(string(value)), 32)
-		if err != nil {
-			return nil, err
-		}
-		return float32(n), nil
+		n, err := strconv.ParseFloat(value, 32)
+		return float32(n), err
 	case reflect.Float64:
 		if len(value) == 0 {
 			return float64(0.0), nil
 		}
-		n, err := strconv.ParseFloat(strings.TrimSpace(string(value)), 64)
-		if err != nil {
-			return nil, err
-		}
-		return n, nil
+		return strconv.ParseFloat(value, 64)
 	case reflect.Int:
 		if len(value) == 0 {
 			return 0, nil
 		}
-		n, err := strconv.ParseInt(strings.TrimSpace(string(value)), 10, 64)
-		if err != nil {
-			return nil, err
+		n, err := strconv.ParseInt(value, 10, 64)
+		return int(n), err
+	case reflect.Int64:
+		if len(value) == 0 {
+			return 0, nil
 		}
-		return int(n), nil
+		n, err := strconv.ParseInt(value, 10, 64)
+		return int64(n), err
+	case reflect.Uint:
+		if len(value) == 0 {
+			return uint(0), nil
+		}
+		n, err := strconv.ParseUint(value, 10, 64)
+		return uint(n), err
+	case reflect.Uint64:
+		if len(value) == 0 {
+			return 0, nil
+		}
+		return strconv.ParseUint(value, 10, 64)
 	case reflect.Bool:
-		b, err := strconv.ParseBool(string(value))
-		if err != nil {
-			return nil, err
+		return strconv.ParseBool(value)
+	case reflect.Slice:
+		if reflectType.Elem().Kind() != reflect.Uint8 {
+			return nil, fmt.Errorf("slice of %s is not supported", reflectType.Elem().Kind().String())
 		}
-		return b, nil
-	case reflect.Map:
-
+		return []byte(value), nil
 	}
 
 	if reflectType == reflect.TypeOf(time.Duration(5)) {
-		n, err := strconv.ParseInt(strings.TrimSpace(string(value)), 10, 64)
+		n, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return nil, err
+			return time.ParseDuration(value)
 		}
 		return time.Duration(n), nil
 	}
@@ -409,17 +259,31 @@ func (c *client) recursiveReplaceStruct(parent string, val reflect.Value) error 
 	for i := 0; i < val.NumField(); i++ {
 		value := val.Field(i)
 		field := val.Type().Field(i)
-		var err error
-
-		path, err := c.getKeyPath(parent, field)
-
-		if _, ok := value.Interface().(time.Time); ok {
-		} else if field.Type.Kind() == reflect.Struct {
-			err = c.recursiveReplaceStruct(path, value)
+		path := c.getKeyPath(parent, field)
+		switch field.Type.Kind() {
+		case reflect.Struct:
+			err := c.recursiveReplaceStruct(path, value)
 			if err != nil {
 				return err
 			}
-		} else {
+		case reflect.Map:
+			if field.Type.Key().Kind() != reflect.String {
+				return fmt.Errorf("%s is unsupported map's key type", field.Type.Key().String())
+			}
+			if field.Type.Elem().Kind() != reflect.String {
+				return fmt.Errorf("%s is unsupported map's value type", field.Type.Elem().String())
+			}
+			_, err := c.Put(path+"/", "")
+			if err != nil {
+				return err
+			}
+			for _, k := range value.MapKeys() {
+				_, err = c.Put(k.String(), value.MapIndex(k).String())
+				if err != nil {
+					return err
+				}
+			}
+		default:
 			fieldValue, err := c.stringifyValue(value)
 			if err != nil {
 				return err
@@ -456,13 +320,11 @@ func (c *client) normalizeKeyName(name string) string {
 	return go_case.ToDotSnakeCase(name)
 }
 
-func (c *client) getTagOptions(v string) (map[string]string, error) {
+func (c *client) getTagOptions(v string) map[string]string {
 	res := make(map[string]string)
-
 	if v == "" {
-		return res, nil
+		return res
 	}
-
 	options := strings.Split(v, ";")
 	for _, option := range options {
 		parts := tagOptionRegexp.FindAllStringSubmatch(option, 1)
@@ -475,7 +337,7 @@ func (c *client) getTagOptions(v string) (map[string]string, error) {
 			res[optionName] = optionValue
 		}
 	}
-	return res, nil
+	return res
 }
 
 func (c *client) allowOption(name string) bool {
