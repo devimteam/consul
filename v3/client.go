@@ -74,7 +74,7 @@ func (c *Client) pullOrPush(consulPath string, dst reflect.Value, structTag *ref
 		}
 		err := c.kv.Put(consulPath, content)
 		if err != nil {
-			return errors.Wrapf(err, "put to '%'", consulPath)
+			return errors.Wrapf(err, "put to '%s'", consulPath)
 		}
 	}
 	if fn, ok := wellKnowTypeParsers[dst.Type()]; ok {
