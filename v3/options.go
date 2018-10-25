@@ -19,3 +19,9 @@ func Period(period time.Duration) Option {
 		opts.refreshPeriod = period
 	}
 }
+
+func SetKV(kv KV) Option {
+	return func(opts *options) {
+		opts.kv = kv
+	}
+}

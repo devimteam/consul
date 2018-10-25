@@ -28,6 +28,7 @@ type options struct {
 	onlyPull      bool
 	disableListen bool
 	refreshPeriod time.Duration
+	kv            KV
 }
 
 type Client struct {
@@ -54,11 +55,15 @@ func NewClient(opts ...Option) (*Client, error) {
 	for _, opt := range opts {
 		opt(&cl.opts)
 	}
-	c, err := consulapi.NewClient(consulapi.DefaultConfig())
-	if err != nil {
-		return nil, err
+	if cl.opts.kv == nil {
+		c, err := consulapi.NewClient(consulapi.DefaultConfig())
+		if err != nil {
+			return nil, err
+		}
+		cl.kv = consulKV{kv: c.KV()}
+	} else {
+		cl.kv = cl.opts.kv
 	}
-	cl.kv = consulKV{kv: c.KV()}
 	if !cl.opts.disableListen {
 		go cl.runWatch()
 	}
