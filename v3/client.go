@@ -2,11 +2,14 @@ package consul
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"path"
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	consulapi "github.com/hashicorp/consul/api"
 	"github.com/pkg/errors"
@@ -17,21 +20,49 @@ type KV interface {
 	Put(path string, value []byte) error
 }
 
+type Updatable interface {
+	Update([]byte)
+}
+
+type options struct {
+	onlyPull      bool
+	disableListen bool
+	refreshPeriod time.Duration
+}
+
 type Client struct {
 	kv   KV
-	opts struct {
-		onlyPull bool
+	stop func()
+	ctx  context.Context
+	opts options
+
+	watch struct {
+		list []watchItem
+		lock sync.Mutex
 	}
 }
 
-func NewClient() (*Client, error) {
+func NewClient(opts ...Option) (*Client, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cl := &Client{
+		stop: cancel,
+		ctx:  ctx,
+		opts: options{
+			refreshPeriod: time.Minute,
+		},
+	}
+	for _, opt := range opts {
+		opt(&cl.opts)
+	}
 	c, err := consulapi.NewClient(consulapi.DefaultConfig())
 	if err != nil {
 		return nil, err
 	}
-	return &Client{
-		kv: consulKV{kv: c.KV()},
-	}, nil
+	cl.kv = consulKV{kv: c.KV()}
+	if !cl.opts.disableListen {
+		go cl.runWatch()
+	}
+	return cl, nil
 }
 
 func Must(client *Client, err error) *Client {
@@ -57,6 +88,8 @@ func RegisterWellKnowType(t reflect.Type, fn CustomParser) {
 	wellKnowTypeParsers[t] = fn
 }
 
+var reflectUpdatableInterface = reflect.TypeOf(Updatable(nil))
+
 func (c *Client) pullOrPush(consulPath string, dst reflect.Value, structTag *reflect.StructField) error {
 	if !dst.CanSet() {
 		return nil
@@ -76,6 +109,11 @@ func (c *Client) pullOrPush(consulPath string, dst reflect.Value, structTag *ref
 		if err != nil {
 			return errors.Wrapf(err, "put to '%s'", consulPath)
 		}
+	}
+	if !c.opts.disableListen && dst.CanInterface() && dst.Type().Implements(reflectUpdatableInterface) {
+		c.watch.lock.Lock()
+		c.watch.list = append(c.watch.list, watchItem{path: consulPath, target: dst.Interface().(Updatable)})
+		c.watch.lock.Unlock()
 	}
 	if fn, ok := wellKnowTypeParsers[dst.Type()]; ok {
 		val, err := fn(consulPath, content)
@@ -218,4 +256,33 @@ func (c *Client) defaultParser(t reflect.Value, value []byte) (interface{}, erro
 	default:
 		return nil, errors.Errorf("can not find parser for %s", t.Type())
 	}
+}
+
+func (c *Client) Stop() {
+	c.stop()
+}
+
+func (c *Client) runWatch() {
+	timer := time.NewTimer(c.opts.refreshPeriod)
+	timer.Stop()
+	defer timer.Stop()
+	for {
+		timer.Reset(c.opts.refreshPeriod)
+		select {
+		case <-timer.C:
+			c.watch.lock.Lock()
+			for _, item := range c.watch.list {
+				raw, _ := c.kv.Get(item.path)
+				item.target.Update(raw)
+			}
+			c.watch.lock.Unlock()
+		case <-c.ctx.Done():
+			return
+		}
+	}
+}
+
+type watchItem struct {
+	path   string
+	target Updatable
 }

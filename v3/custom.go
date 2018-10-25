@@ -10,10 +10,10 @@ func init() {
 	RegisterWellKnowType(reflect.TypeOf(time.Time{}), timeTime)
 }
 
-func timeTime(_ string, content []byte) (interface{}, error) {
-	return time.Parse(time.RFC3339, string(content))
+func timeTime(_ string, raw []byte) (interface{}, error) {
+	return time.Parse(time.RFC3339, string(raw))
 }
 
-func timeDuration(_ string, content []byte) (interface{}, error) {
-	return time.ParseDuration(string(content))
+func timeDuration(_ string, raw []byte) (interface{}, error) {
+	return time.ParseDuration(string(raw))
 }
