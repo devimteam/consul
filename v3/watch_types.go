@@ -2,6 +2,7 @@ package consul
 
 import (
 	"reflect"
+	"strconv"
 	"sync/atomic"
 	"time"
 )
@@ -9,6 +10,7 @@ import (
 func init() {
 	RegisterWellKnowType(reflect.TypeOf(String{}), watchableString)
 	RegisterWellKnowType(reflect.TypeOf(Duration{}), watchableDuration)
+	RegisterWellKnowType(reflect.TypeOf(Int{}), watchableInt)
 }
 
 type String struct {
@@ -47,6 +49,28 @@ func (d Duration) Duration() time.Duration {
 
 func watchableDuration(_ string, raw []byte) (interface{}, error) {
 	d := Duration{}
+	d.Update(raw)
+	return d, nil
+}
+
+type Int struct {
+	v atomic.Value
+}
+
+func (d *Int) Update(raw []byte) {
+	i, err := strconv.Atoi(string(raw))
+	if err != nil {
+		return
+	}
+	d.v.Store(i)
+}
+
+func (d Int) Int() int {
+	return d.v.Load().(int)
+}
+
+func watchableInt(_ string, raw []byte) (interface{}, error) {
+	d := Int{}
 	d.Update(raw)
 	return d, nil
 }

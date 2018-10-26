@@ -25,3 +25,9 @@ func SetKV(kv KV) Option {
 		opts.kv = kv
 	}
 }
+
+func Normalizer(f func(string) string) Option {
+	return func(opts *options) {
+		opts.normalizer = f
+	}
+}

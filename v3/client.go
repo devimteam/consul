@@ -13,6 +13,7 @@ import (
 
 	consulapi "github.com/hashicorp/consul/api"
 	"github.com/pkg/errors"
+	"github.com/vetcher/go-case"
 )
 
 type KV interface {
@@ -29,6 +30,7 @@ type options struct {
 	disableListen bool
 	refreshPeriod time.Duration
 	kv            KV
+	normalizer    func(string) string
 }
 
 type Client struct {
@@ -50,6 +52,7 @@ func NewClient(opts ...Option) (*Client, error) {
 		ctx:  ctx,
 		opts: options{
 			refreshPeriod: time.Minute,
+			normalizer:    go_case.ToDotSnakeCase,
 		},
 	}
 	for _, opt := range opts {
@@ -79,10 +82,14 @@ func Must(client *Client, err error) *Client {
 
 func (c *Client) PullOrPush(path string, out interface{}) error {
 	v := reflect.ValueOf(out)
-	if !v.CanSet() {
+	if !v.Elem().CanSet() {
 		return errors.New("out is not a pointer")
 	}
 	return c.pullOrPush(path, v.Elem(), nil)
+}
+
+func (c *Client) Watch(path string, out Updatable) {
+	c.registerWatch(path, reflect.ValueOf(out))
 }
 
 type CustomParser func(path string, content []byte) (interface{}, error)
@@ -93,7 +100,7 @@ func RegisterWellKnowType(t reflect.Type, fn CustomParser) {
 	wellKnowTypeParsers[t] = fn
 }
 
-var reflectUpdatableInterface = reflect.TypeOf(Updatable(nil))
+var reflectUpdatableInterface = reflect.TypeOf((*Updatable)(nil)).Elem()
 
 func (c *Client) pullOrPush(consulPath string, dst reflect.Value, structTag *reflect.StructField) error {
 	if !dst.CanSet() {
@@ -104,21 +111,21 @@ func (c *Client) pullOrPush(consulPath string, dst reflect.Value, structTag *ref
 		return errors.Wrapf(err, "get from '%s'", consulPath)
 	}
 	if !c.opts.onlyPull && len(content) == 0 {
-		if structTag != nil {
-			opts := makeTagOpts(structTag.Tag.Get("consul"))
-			if opts.Default != nil {
-				content = []byte(*opts.Default)
+		if _, ok := wellKnowTypeParsers[dst.Type()]; ok || dst.Kind() != reflect.Struct {
+			if structTag != nil {
+				opts := makeTagOpts(structTag.Tag.Get("consul"))
+				if opts.Default != nil {
+					content = []byte(*opts.Default)
+				}
+			}
+			err := c.kv.Put(consulPath, content)
+			if err != nil {
+				return errors.Wrapf(err, "put to '%s'", consulPath)
 			}
 		}
-		err := c.kv.Put(consulPath, content)
-		if err != nil {
-			return errors.Wrapf(err, "put to '%s'", consulPath)
-		}
 	}
-	if !c.opts.disableListen && dst.CanInterface() && dst.Type().Implements(reflectUpdatableInterface) {
-		c.watch.lock.Lock()
-		c.watch.list = append(c.watch.list, watchItem{path: consulPath, target: dst.Interface().(Updatable)})
-		c.watch.lock.Unlock()
+	if !c.opts.disableListen {
+		c.registerWatch(consulPath, dst)
 	}
 	if fn, ok := wellKnowTypeParsers[dst.Type()]; ok {
 		val, err := fn(consulPath, content)
@@ -136,7 +143,7 @@ func (c *Client) pullOrPush(consulPath string, dst reflect.Value, structTag *ref
 				continue
 			}
 			fieldType := dst.Type().Field(i)
-			err := c.pullOrPush(makeConsulPath(consulPath, fieldType), field, &fieldType)
+			err := c.pullOrPush(c.makeConsulPath(consulPath, fieldType), field, &fieldType)
 			if err != nil {
 				return err
 			}
@@ -152,11 +159,19 @@ func (c *Client) pullOrPush(consulPath string, dst reflect.Value, structTag *ref
 	return nil
 }
 
-func makeConsulPath(pref string, fieldType reflect.StructField) string {
+func (c *Client) registerWatch(consulPath string, dst reflect.Value) {
+	if dst.CanInterface() && dst.Type().Implements(reflectUpdatableInterface) {
+		c.watch.lock.Lock()
+		c.watch.list = append(c.watch.list, watchItem{path: consulPath, target: dst.Interface().(Updatable)})
+		c.watch.lock.Unlock()
+	}
+}
+
+func (c *Client) makeConsulPath(pref string, fieldType reflect.StructField) string {
 	tagOpts := makeTagOpts(fieldType.Tag.Get("consul"))
 	var kName string
 	if tagOpts.Name == nil {
-		kName = fieldType.Name
+		kName = c.opts.normalizer(fieldType.Name)
 	} else {
 		kName = *tagOpts.Name
 	}
