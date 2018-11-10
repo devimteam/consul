@@ -5,12 +5,15 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/pelletier/go-toml"
 )
 
 func init() {
 	RegisterWellKnowType(reflect.TypeOf(String{}), watchableString)
 	RegisterWellKnowType(reflect.TypeOf(Duration{}), watchableDuration)
 	RegisterWellKnowType(reflect.TypeOf(Int{}), watchableInt)
+	RegisterWellKnowType(reflect.TypeOf(Toml{}), tomlConfig)
 }
 
 type String struct {
@@ -73,4 +76,33 @@ func watchableInt(_ string, raw []byte) (interface{}, error) {
 	d := Int{}
 	d.Update(raw)
 	return d, nil
+}
+
+type Toml struct {
+	v atomic.Value
+}
+
+func tomlConfig(_ string, raw []byte) (interface{}, error) {
+	t := Toml{}
+	if err := t.update(raw); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+func (t *Toml) Update(raw []byte) {
+	_ = t.update(raw)
+}
+
+func (t *Toml) update(raw []byte) error {
+	tree, err := toml.LoadBytes(raw)
+	if err != nil {
+		return err
+	}
+	t.v.Store(tree)
+	return nil
+}
+
+func (t Toml) Tree() *toml.Tree {
+	return t.v.Load().(*toml.Tree)
 }
