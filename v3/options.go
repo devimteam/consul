@@ -4,6 +4,10 @@ import (
 	"time"
 )
 
+type Logger interface {
+	Log(...interface{}) error
+}
+
 type Option func(*options)
 
 func OnlyPull(opts *options) {
@@ -29,5 +33,11 @@ func SetKV(kv KV) Option {
 func Normalizer(f func(string) string) Option {
 	return func(opts *options) {
 		opts.normalizer = f
+	}
+}
+
+func SetLogger(logger Logger) Option {
+	return func(opts *options) {
+		opts.logger = logger
 	}
 }

@@ -22,7 +22,7 @@ type KV interface {
 }
 
 type Updatable interface {
-	Update([]byte)
+	Update([]byte) error
 }
 
 type options struct {
@@ -31,6 +31,7 @@ type options struct {
 	refreshPeriod time.Duration
 	kv            KV
 	normalizer    func(string) string
+	logger        Logger
 }
 
 type Client struct {
@@ -96,7 +97,7 @@ type CustomParser func(path string, content []byte) (interface{}, error)
 
 var wellKnowTypeParsers = map[reflect.Type]CustomParser{}
 
-func RegisterWellKnowType(t reflect.Type, fn CustomParser) {
+func RegisterWellKnownType(t reflect.Type, fn CustomParser) {
 	wellKnowTypeParsers[t] = fn
 }
 
@@ -292,8 +293,14 @@ func (c *Client) runWatch() {
 		case <-timer.C:
 			c.watch.lock.Lock()
 			for _, item := range c.watch.list {
-				raw, _ := c.kv.Get(item.path)
-				item.target.Update(raw)
+				raw, err := c.kv.Get(item.path)
+				if err != nil {
+					_ = c.opts.logger.Log("path", item.path, "error", err)
+					continue
+				}
+				if err := item.target.Update(raw); err != nil {
+					_ = c.opts.logger.Log("path", item.path, "error", err)
+				}
 			}
 			c.watch.lock.Unlock()
 		case <-c.ctx.Done():

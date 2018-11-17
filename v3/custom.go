@@ -6,8 +6,8 @@ import (
 )
 
 func init() {
-	RegisterWellKnowType(reflect.TypeOf(time.Duration(0)), timeDuration)
-	RegisterWellKnowType(reflect.TypeOf(time.Time{}), timeTime)
+	RegisterWellKnownType(reflect.TypeOf(time.Duration(0)), timeDuration)
+	RegisterWellKnownType(reflect.TypeOf(time.Time{}), timeTime)
 }
 
 func timeTime(_ string, raw []byte) (interface{}, error) {
