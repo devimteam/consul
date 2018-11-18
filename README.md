@@ -1,46 +1,22 @@
-Go Consul Client Wrapper
-========================
+### Tiny consul wrapper
 
-# API 
+This wrapper works with structures and allows to unmarshal consul configuration right into your structure.
 
-### GetServices(service string, tag string) ([]*consulapi.ServiceEntry, *consulapi.QueryMeta, error) 
+If key is not in consul, wrappers adds it and sets default value from structures field tags.
 
-get a services from consul
+### Install
 
-### GetFirstService(service string, tag string) (*consulapi.ServiceEntry, *consulapi.QueryMeta, error)
+To get the package, execute:
+```bash
+go get gopkg.in/devimteam/consul.v3
+```
 
-get a first service from consul
+To import this package, add the following line to your code:
+```go
+import "gopkg.in/devimteam/consul.v3"
+```
 
-### RegisterService(name string, addr string, tags ...string) error 
+### Environment variables
 
-register a service with local agent
-
-### DeRegisterService(string) error
-
-de-register a service with local agent
-
-### Get(key string) (*consulapi.KVPair, *consulapi.QueryMeta, error)
-
-get KVPair
-
-### WatchGet(key string) chan *consulapi.KVPair
-
-watch create/update KVPair 
-
-### GetStr(key string) (string, error)
-
-get string value
-
-### GetInt(key string) (int, error)
-
-get int value
-
-### Put(key string, value string) (*consulapi.WriteMeta, error)
-
-put KVPair
-
-
-# Environment variables
-
-### GROUP_NAME
+##### GROUP_NAME
 used for setting up global folder for keys. All keys will be accessed by path like GROUP_NAME/key
