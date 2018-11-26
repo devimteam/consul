@@ -2,8 +2,11 @@ package consul
 
 import (
 	"fmt"
+	"os"
 	"testing"
 	"time"
+
+	"github.com/go-kit/kit/log"
 )
 
 func TestMain(t *testing.M) {
@@ -20,7 +23,7 @@ func ExampleNewClient() {
 		Time    time.Time     `consul:"default:2006-01-02T15:04:05Z"`
 		Timeout time.Duration `consul:"default:25h"`
 	}
-	c, err := NewClient()
+	c, err := NewClient(SetLogger(log.NewJSONLogger(os.Stdout)))
 	if err != nil {
 		panic(err)
 	}

@@ -26,7 +26,8 @@ func (s *String) Update(raw []byte) error {
 }
 
 func (s *String) String() string {
-	return s.v.Load().(string)
+	str, _ := s.v.Load().(string)
+	return str
 }
 
 func watchableString(_ string, raw []byte) (interface{}, error) {
@@ -48,7 +49,8 @@ func (d *Duration) Update(raw []byte) error {
 }
 
 func (d Duration) Duration() time.Duration {
-	return d.v.Load().(time.Duration)
+	dur, _ := d.v.Load().(time.Duration)
+	return dur
 }
 
 func watchableDuration(_ string, raw []byte) (interface{}, error) {
@@ -70,7 +72,8 @@ func (d *Int) Update(raw []byte) error {
 }
 
 func (d Int) Int() int {
-	return d.v.Load().(int)
+	i, _ := d.v.Load().(int)
+	return i
 }
 
 func watchableInt(_ string, raw []byte) (interface{}, error) {
@@ -104,5 +107,6 @@ func (t *Toml) update(raw []byte) error {
 }
 
 func (t Toml) Tree() *toml.Tree {
-	return t.v.Load().(*toml.Tree)
+	tree, _ := t.v.Load().(*toml.Tree)
+	return tree
 }

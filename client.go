@@ -86,7 +86,11 @@ func (c *Client) PullOrPush(path string, out interface{}) error {
 	if !v.Elem().CanSet() {
 		return errors.New("out is not a pointer")
 	}
-	return c.pullOrPush(path, v.Elem(), nil)
+	if err := c.pullOrPush(path, v.Elem(), nil); err != nil {
+		return err
+	}
+	c.updateWatch()
+	return nil
 }
 
 func (c *Client) Watch(path string, out Updatable) {
@@ -164,6 +168,10 @@ func (c *Client) registerWatch(consulPath string, dst reflect.Value) {
 	if dst.CanInterface() && dst.Type().Implements(reflectUpdatableInterface) {
 		c.watch.lock.Lock()
 		c.watch.list = append(c.watch.list, watchItem{path: consulPath, target: dst.Interface().(Updatable)})
+		c.watch.lock.Unlock()
+	} else if dst.CanAddr() && dst.Addr().Type().Implements(reflectUpdatableInterface) {
+		c.watch.lock.Lock()
+		c.watch.list = append(c.watch.list, watchItem{path: consulPath, target: dst.Addr().Interface().(Updatable)})
 		c.watch.lock.Unlock()
 	}
 }
@@ -291,22 +299,26 @@ func (c *Client) runWatch() {
 		timer.Reset(c.opts.refreshPeriod)
 		select {
 		case <-timer.C:
-			c.watch.lock.Lock()
-			for _, item := range c.watch.list {
-				raw, err := c.kv.Get(item.path)
-				if err != nil {
-					_ = c.opts.logger.Log("path", item.path, "error", err)
-					continue
-				}
-				if err := item.target.Update(raw); err != nil {
-					_ = c.opts.logger.Log("path", item.path, "error", err)
-				}
-			}
-			c.watch.lock.Unlock()
+			c.updateWatch()
 		case <-c.ctx.Done():
 			return
 		}
 	}
+}
+
+func (c *Client) updateWatch() {
+	c.watch.lock.Lock()
+	for _, item := range c.watch.list {
+		raw, err := c.kv.Get(item.path)
+		if err != nil {
+			_ = c.opts.logger.Log("path", item.path, "error", err)
+			continue
+		}
+		if err := item.target.Update(raw); err != nil {
+			_ = c.opts.logger.Log("path", item.path, "error", err)
+		}
+	}
+	c.watch.lock.Unlock()
 }
 
 type watchItem struct {
