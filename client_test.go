@@ -56,7 +56,7 @@ func ExampleNewClient_watch() {
 		WatchableTimeout Duration      `consul:"default:5s"`
 		WatchableInt     Int           `consul:"default:5"`
 	}
-	c, err := NewClient(Period(time.Second))
+	c, err := NewClient(RefreshPeriod(time.Second))
 	if err != nil {
 		panic(err)
 	}

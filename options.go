@@ -18,7 +18,7 @@ func DisableWatch(opts *options) {
 	opts.disableListen = true
 }
 
-func Period(period time.Duration) Option {
+func RefreshPeriod(period time.Duration) Option {
 	return func(opts *options) {
 		opts.refreshPeriod = period
 	}
